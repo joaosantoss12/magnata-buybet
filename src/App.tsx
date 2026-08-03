@@ -75,7 +75,23 @@ function TelegramLoginWidget() {
   )
 }
 
+const URL_RE = /(https?:\/\/[^\s]+)/g
+
+function linkifyBet(text: string) {
+  return text.split(URL_RE).map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="pick-link">
+        {part}
+      </a>
+    ) : (
+      part
+    )
+  )
+}
+
 function PickCard({ pick }: { pick: PickSnapshot }) {
+  const [zoomed, setZoomed] = useState(false)
+
   return (
     <div className="email-preview">
       <div className="email-row">
@@ -84,7 +100,7 @@ function PickCard({ pick }: { pick: PickSnapshot }) {
       </div>
       <div className="email-row">
         <span className="email-label">Aposta</span>
-        <span className="pick-highlight">{pick.bet}</span>
+        <span className="pick-highlight">{linkifyBet(pick.bet)}</span>
       </div>
       <div className="email-row">
         <span className="email-label">Odd</span>
@@ -103,7 +119,17 @@ function PickCard({ pick }: { pick: PickSnapshot }) {
         </div>
       )}
       {pick.image_url && (
-        <img src={pick.image_url} alt="Bilhete da aposta" className="pick-image" />
+        <img
+          src={pick.image_url}
+          alt="Bilhete da aposta"
+          className="pick-image"
+          onClick={() => setZoomed(true)}
+        />
+      )}
+      {zoomed && pick.image_url && (
+        <div className="image-zoom-overlay" onClick={() => setZoomed(false)}>
+          <img src={pick.image_url} alt="Bilhete da aposta ampliada" className="image-zoom-full" />
+        </div>
       )}
     </div>
   )
