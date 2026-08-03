@@ -1,11 +1,8 @@
 import Stripe from 'stripe'
-import { createClient } from '@supabase/supabase-js'
+import { supabaseAdmin } from './_lib/supabaseAdmin.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL,
-  process.env.VITE_SUPABASE_ANON_KEY
-)
+const SELLER = 'magnata'
 
 // ── Helper function to convert line breaks to HTML ──────────────────────
 function nl2br(text) {
@@ -33,13 +30,16 @@ async function createInvoiceXpress(email, amountTotalCents) {
     return null;
   }
 
+  // Calcula os valores: O Stripe envia em cêntimos (ex: 2000 = 20.00€)
   const total = amountTotalCents / 100;
-  const unitPrice = (total / 1.23).toFixed(2);
+  const unitPrice = (total / 1.23).toFixed(2); // Retira o IVA de 23%
 
+  // Formata a data de hoje para DD/MM/YYYY
   const today = new Date();
   const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
 
   try {
+    // 1. Cria a Fatura Simplificada (Fica em Rascunho)
     const createRes = await fetch(`https://${account}.app.invoicexpress.com/simplified_invoices.json?api_key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -49,7 +49,7 @@ async function createInvoiceXpress(email, amountTotalCents) {
           due_date: dateStr,
           client: {
             name: "Consumidor Final",
-            email: email,
+            email: email, // Guardamos o email na fatura para registo
             country: "Portugal"
           },
           items: [
@@ -57,7 +57,7 @@ async function createInvoiceXpress(email, amountTotalCents) {
               name: "Análise Desportiva Premium",
               unit_price: unitPrice,
               quantity: 1,
-              tax: { name: "IVA23" }
+              tax: { name: "IVA23" } // Usa a taxa padrão de 23%
             }
           ]
         }
@@ -71,8 +71,9 @@ async function createInvoiceXpress(email, amountTotalCents) {
     }
 
     const invoiceId = data.simplified_invoice.id;
-    const pdfLink = data.simplified_invoice.permalink;
+    const pdfLink = data.simplified_invoice.permalink; // Link seguro para o cliente ver o PDF
 
+    // 2. Finaliza a Fatura para ter validade fiscal
     await fetch(`https://${account}.app.invoicexpress.com/simplified_invoices/${invoiceId}/change-state.json?api_key=${apiKey}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -114,19 +115,54 @@ export default async function handler(req, res) {
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object
     const seller = session.metadata?.seller
+    const purchaseId = session.metadata?.purchase_id
 
     // Only process payments made through this seller's checkout
-    if (seller !== 'magnata') {
+    if (seller !== SELLER || !purchaseId) {
       return res.status(200).json({ received: true })
     }
 
+    // Idempotência à prova de reenvio: o Stripe pode reenviar o mesmo evento.
+    // `paid` na própria linha da compra é a marca de "já processado".
+    const { data: purchase, error: fetchError } = await supabaseAdmin
+      .from('purchases')
+      .select('*')
+      .eq('id', purchaseId)
+      .single()
+
+    if (fetchError || !purchase) {
+      console.error('[webhook] purchase not found:', purchaseId, fetchError?.message)
+      return res.status(200).json({ received: true, skipped: 'purchase not found' })
+    }
+
+    if (purchase.paid) {
+      return res.status(200).json({ received: true, skipped: 'already processed' })
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from('purchases')
+      .update({
+        paid: true,
+        paid_at: new Date().toISOString(),
+        stripe_session_id: session.id,
+        customer_email: session.customer_details?.email ?? null,
+      })
+      .eq('id', purchaseId)
+
+    if (updateError) {
+      console.error('[webhook] failed to mark purchase paid:', updateError.message)
+      return res.status(500).json({ error: 'Failed to record purchase' })
+    }
+
+    // A entrega principal é no site (o comprador vê a aposta ao voltar,
+    // autenticado com o mesmo Telegram). O email é só um bónus, best-effort.
     const email = session.customer_details?.email
     const amountTotal = session.amount_total
 
     if (email) {
       try {
-        const invoiceLink = await createInvoiceXpress(email, amountTotal);
-        await sendPickEmail(email, invoiceLink);
+        const invoiceLink = await createInvoiceXpress(email, amountTotal)
+        await sendPickEmail(email, purchase, invoiceLink)
         console.log(`[webhook] Pick email enviado para ${email}`)
       } catch (err) {
         console.error('[webhook] Failed to send email or invoice:', err.message)
@@ -137,38 +173,13 @@ export default async function handler(req, res) {
   res.status(200).json({ received: true })
 }
 
-// ── Fetch active pick from Supabase ────────────────────────────────────
-async function getActivePick() {
-  const { data, error } = await supabase
-    .from('picks')
-    .select('*')
-    .eq('active', true)
-    .eq('seller', 'magnata')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (error || !data) {
-    console.error('[getActivePick] Supabase error:', error?.message)
-    return {
-      game: 'A revelar',
-      bet: 'A revelar',
-      odd: '—',
-      analysis: 'A análise será enviada em breve.',
-      markets: '',
-    }
-  }
-
-  return data
-}
-
 // ── Send email via Brevo ───────────────────────────────────────────────
-async function sendPickEmail(to, invoiceLink) {
-  const pick = await getActivePick()
-
+async function sendPickEmail(to, pick, invoiceLink) {
+  // Convert line breaks to HTML for text fields
   const analysisHtml = nl2br(pick.analysis);
   const marketsHtml = nl2br(pick.markets);
 
+  // Bloco HTML condicional: só aparece se a fatura for gerada com sucesso
   const invoiceHtml = invoiceLink ? `
     <div style="margin-bottom:24px;padding:16px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.1);border-radius:8px;text-align:center;">
       <p style="margin:0 0 8px;font-size:14px;color:#F1F5F9;font-weight:600;">O teu pagamento foi processado com sucesso.</p>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import './App.css'
  
@@ -6,6 +6,8 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
 )
+
+const TELEGRAM_CLIENT_ID = import.meta.env.VITE_TELEGRAM_CLIENT_ID as string
 
 interface Pick {
   game: string
@@ -17,20 +19,171 @@ interface Pick {
   active: boolean
 }
 
-function SuccessPage() {
+interface PickSnapshot {
+  id: string
+  game: string
+  bet: string
+  odd: string
+  analysis: string
+  markets: string
+  image_url: string | null
+  paid_at: string
+}
+
+type TgUser = {
+  username?: string
+  first_name: string
+  photo_url?: string
+}
+
+type TelegramAuthData = { id_token?: string; error?: string }
+
+declare global {
+  interface Window {
+    onTelegramAuth?: (data: TelegramAuthData) => void
+  }
+}
+
+// ── Telegram login widget: injects oauth.telegram.org's script next to a
+// button it turns into the login trigger. This site has its own dedicated
+// bot (TELEGRAM_CLIENT_ID) — its domain must be registered with @BotFather
+// under that bot's Web Login settings for the widget to render.
+function TelegramLoginWidget() {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const script = document.createElement('script')
+    script.src = 'https://oauth.telegram.org/js/telegram-login.js?22'
+    script.async = true
+    script.setAttribute('data-client-id', TELEGRAM_CLIENT_ID)
+    script.setAttribute('data-onauth', 'onTelegramAuth(data)')
+    script.setAttribute('data-request-access', 'write')
+    el.appendChild(script)
+    return () => {
+      script.remove()
+    }
+  }, [])
+
+  return (
+    <div ref={containerRef} className="tg-login-widget">
+      <button className="tg-auth-button" data-style="shine" type="button">
+        Entrar com Telegram
+      </button>
+    </div>
+  )
+}
+
+function PickCard({ pick }: { pick: PickSnapshot }) {
+  return (
+    <div className="email-preview">
+      <div className="email-row">
+        <span className="email-label">Jogo</span>
+        <span>{pick.game}</span>
+      </div>
+      <div className="email-row">
+        <span className="email-label">Aposta</span>
+        <span className="pick-highlight">{pick.bet}</span>
+      </div>
+      <div className="email-row">
+        <span className="email-label">Odd</span>
+        <span className="odd-value">{pick.odd}</span>
+      </div>
+      {pick.analysis && (
+        <div className="email-analysis">
+          <span className="email-label">Análise</span>
+          <p>{pick.analysis}</p>
+        </div>
+      )}
+      {pick.markets && (
+        <div className="email-analysis">
+          <span className="email-label">Mercados Alternativos</span>
+          <p>{pick.markets}</p>
+        </div>
+      )}
+      {pick.image_url && (
+        <img src={pick.image_url} alt="Bilhete da aposta" className="pick-image" />
+      )}
+    </div>
+  )
+}
+
+function SuccessPage({ tgUser }: { tgUser: TgUser | null }) {
+  const purchaseId = new URLSearchParams(window.location.search).get('purchase_id')
+  const [status, setStatus] = useState<
+    'checking' | 'pending' | 'ready' | 'forbidden' | 'not_found' | 'logged_out' | 'error'
+  >('checking')
+  const [pick, setPick] = useState<PickSnapshot | null>(null)
+  const attemptsRef = useRef(0)
+
+  const poll = useCallback(async () => {
+    if (!purchaseId) {
+      setStatus('error')
+      return
+    }
+    try {
+      const res = await fetch(`/api/purchase-status?id=${encodeURIComponent(purchaseId)}`)
+      const data = await res.json()
+      setStatus(data.status)
+      if (data.status === 'ready') setPick(data.pick)
+    } catch {
+      setStatus('error')
+    }
+  }, [purchaseId])
+
+  useEffect(() => {
+    poll()
+    const interval = setInterval(() => {
+      attemptsRef.current += 1
+      if (attemptsRef.current > 20 || status !== 'checking' && status !== 'pending') {
+        clearInterval(interval)
+        return
+      }
+      poll()
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [poll, status])
+
   return (
     <div className="success-page">
       <div className="success-card">
         <div className="success-icon">✓</div>
         <h1>Pagamento Confirmado!</h1>
-        <p>
-          Obrigado pela tua compra. A análise e aposta serão enviadas para o
-          teu email em breve.
-        </p>
-        <p className="success-sub">
-          Se não receberes o email nos próximos minutos, verifica a pasta de
-          spam e/ou a pasta de "promoções". Qualquer dúvida, entra em contacto pelo Telegram @suporteEPC
-        </p>
+
+        {status === 'checking' || status === 'pending' ? (
+          <>
+            <span className="spinner-gold" />
+            <p>A preparar a tua aposta...</p>
+            <p className="success-sub">Isto demora normalmente só alguns segundos.</p>
+          </>
+        ) : status === 'ready' && pick ? (
+          <>
+            <p>Aqui está a tua análise e aposta recomendada:</p>
+            <PickCard pick={pick} />
+            <p className="success-sub">
+              Podes voltar a este site e iniciar sessão com o mesmo Telegram sempre que
+              quiseres consultar as tuas apostas compradas.
+            </p>
+          </>
+        ) : status === 'logged_out' || status === 'forbidden' ? (
+          <>
+            <p>
+              Inicia sessão com o <strong>mesmo Telegram</strong> que usaste na compra para
+              veres a tua aposta.
+            </p>
+            {!tgUser && <TelegramLoginWidget />}
+          </>
+        ) : (
+          <>
+            <p>Não encontrámos essa compra.</p>
+            <p className="success-sub">
+              Se acabaste de pagar, tenta recarregar a página. Caso contrário contacta
+              magnataapostas@gmail.com
+            </p>
+          </>
+        )}
+
         <a href="/" className="btn-primary">
           Voltar ao Início
         </a>
@@ -52,15 +205,112 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
   )
 }
 
+function TelegramAuthBar({
+  tgUser,
+  onLogout,
+}: {
+  tgUser: TgUser | null
+  onLogout: () => void
+}) {
+  if (tgUser) {
+    return (
+      <div className="tg-auth-bar">
+        {tgUser.photo_url && (
+          <img src={tgUser.photo_url} alt={tgUser.first_name} referrerPolicy="no-referrer" className="tg-avatar" />
+        )}
+        <div className="tg-auth-info">
+          <span className="tg-auth-name">{tgUser.first_name}</span>
+          {tgUser.username && <span className="tg-auth-username">@{tgUser.username}</span>}
+        </div>
+        <button className="tg-logout-btn" onClick={onLogout} type="button">
+          Sair
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="tg-auth-bar tg-auth-bar-login">
+      <p>
+        <strong>Inicia sessão com o Telegram</strong> antes de comprar — assim a tua aposta
+        fica disponível aqui no site depois do pagamento, sem depender do email.
+      </p>
+      <TelegramLoginWidget />
+    </div>
+  )
+}
+
+function MyPurchases({ purchases }: { purchases: PickSnapshot[] }) {
+  if (!purchases.length) return null
+  return (
+    <section className="section my-purchases">
+      <div className="container container-sm">
+        <p className="section-tag">A tua conta</p>
+        <h2 className="section-title">As Tuas Apostas Compradas</h2>
+        <div className="my-purchases-list">
+          {purchases.map((p) => (
+            <PickCard key={p.id} pick={p} />
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [pick, setPick] = useState<Pick>()
+  const [tgUser, setTgUser] = useState<TgUser | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [myPurchases, setMyPurchases] = useState<PickSnapshot[]>([])
   const isSuccess = new URLSearchParams(window.location.search).get('success') === '1'
+
+  const refreshAuth = useCallback(async () => {
+    try {
+      const res = await fetch('/api/telegram-me')
+      const data = await res.json()
+      setTgUser(data.loggedIn ? data.user : null)
+    } finally {
+      setAuthChecked(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    // Registers the callback the telegram-login.js embed calls on auth. Must
+    // be defined unconditionally — the library evals `onTelegramAuth(data)`
+    // in global scope.
+    window.onTelegramAuth = async (data: TelegramAuthData) => {
+      if (!data.id_token) {
+        setError('Login com Telegram falhou. Tenta novamente.')
+        return
+      }
+      const res = await fetch('/api/telegram-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: data.id_token }),
+      })
+      if (!res.ok) {
+        setError('Login com Telegram falhou. Tenta novamente.')
+        return
+      }
+      await refreshAuth()
+    }
+  }, [refreshAuth])
+
+  const logout = useCallback(async () => {
+    await fetch('/api/telegram-logout', { method: 'POST' })
+    setTgUser(null)
+    setMyPurchases([])
+  }, [])
 
   useEffect(() => {
     if (isSuccess) window.scrollTo(0, 0)
   }, [isSuccess])
+
+  useEffect(() => {
+    refreshAuth()
+  }, [refreshAuth])
 
   useEffect(() => {
     supabase
@@ -75,12 +325,24 @@ function App() {
       })
   }, [])
 
-  const PRICE = pick ? `${Number(pick.price).toFixed(2)}€` : '99.99€'
-  const isDisabled = loading || pick?.active === false
+  useEffect(() => {
+    if (isSuccess || !authChecked || !tgUser) return
+    fetch('/api/my-purchases')
+      .then((res) => res.json())
+      .then((data) => setMyPurchases(data.purchases ?? []))
+      .catch(() => setMyPurchases([]))
+  }, [isSuccess, authChecked, tgUser])
 
-  if (isSuccess) return <SuccessPage />
+  const PRICE = pick ? `${Number(pick.price).toFixed(2)}€` : '99.99€'
+  const disabledReason = !tgUser ? 'Inicia sessão com o Telegram para comprar' : undefined
+
+  if (isSuccess) return <SuccessPage tgUser={tgUser} />
 
   const handleBuy = async () => {
+    if (!tgUser) {
+      document.getElementById('tg-auth-bar')?.scrollIntoView({ behavior: 'smooth' })
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -92,7 +354,7 @@ function App() {
       if (data.url) {
         window.location.href = data.url
       } else {
-        setError('Erro ao processar o pagamento. Tenta novamente.')
+        setError(data.error || 'Erro ao processar o pagamento. Tenta novamente.')
       }
     } catch {
       setError('Não foi possível ligar ao servidor. Tenta mais tarde.')
@@ -115,7 +377,12 @@ function App() {
               Magnata <span className="logo-highlight">Apostas</span>
             </span>
           </div>
-          <button className="btn-nav" onClick={handleBuy} disabled={isDisabled}>
+          <button
+            className="btn-nav"
+            onClick={handleBuy}
+            disabled={loading || pick?.active === false}
+            title={disabledReason}
+          >
             Comprar — {PRICE}
           </button>
         </div>
@@ -131,14 +398,20 @@ function App() {
             <span className="gradient-text">Na Hora Certa.</span>
           </h1>
           <p className="hero-sub">
-            Recebe a nossa análise detalhada e aposta recomendada
-            diretamente no teu email. Sem subscrições. Sem complicações.
+            Recebe a nossa análise detalhada e aposta recomendada diretamente aqui no site,
+            logo após o pagamento. Sem subscrições. Sem complicações.
           </p>
+
+          <div id="tg-auth-bar">
+            <TelegramAuthBar tgUser={tgUser} onLogout={logout} />
+          </div>
+
           <div className="hero-actions">
             <button
               className="btn-primary btn-large"
               onClick={handleBuy}
-              disabled={isDisabled}
+              disabled={loading || pick?.active === false}
+              title={disabledReason}
             >
               {loading ? (
                 <span className="spinner" />
@@ -150,7 +423,7 @@ function App() {
               )}
             </button>
             <p className="hero-guarantee">
-              🔒 Pagamento seguro via Stripe · Entrega por email
+              🔒 Pagamento seguro via Stripe · Entrega imediata no site
             </p>
           </div>
           {error && <p className="error-msg">{error}</p>}
@@ -190,28 +463,25 @@ function App() {
           <div className="steps">
             <div className="step">
               <div className="step-num">Passo [1]</div>
-              <div className="step-icon">💳</div>
-              <h3>Compras a Análise</h3>
-              <p>
-                Um pagamento único de {PRICE} via Stripe. Seguro e rápido.
-              </p>
+              <div className="step-icon">📲</div>
+              <h3>Entras com o Telegram</h3>
+              <p>Login rápido e seguro, sem passwords, com a tua conta de Telegram.</p>
             </div>
             <div className="step-arrow">→</div>
             <div className="step">
               <div className="step-num">Passo [2]</div>
-              <div className="step-icon">📧</div>
-              <h3>Introduzes o Email</h3>
-              <p>
-                No checkout do Stripe, introduzes o teu endereço de email.
-              </p>
+              <div className="step-icon">💳</div>
+              <h3>Compras a Análise</h3>
+              <p>Um pagamento único de {PRICE} via Stripe. Seguro e rápido.</p>
             </div>
             <div className="step-arrow">→</div>
             <div className="step">
               <div className="step-num">Passo [3]</div>
               <div className="step-icon">🎯</div>
-              <h3>Recebes a Aposta</h3>
+              <h3>Vês a Aposta no Site</h3>
               <p>
-                A análise detalhada e aposta recomendada chegam ao teu email em minutos.
+                A análise detalhada e aposta recomendada aparecem aqui mesmo, logo após o
+                pagamento.
               </p>
             </div>
           </div>
@@ -235,7 +505,7 @@ function App() {
                   'Aposta recomendada com odd',
                   'Fundamentação e raciocínio da aposta',
                   'Mercados alternativos sugeridos',
-                  'Entregue por email em minutos',
+                  'Disponível no site em segundos',
                   'Sem subscrição — pagas só quando queres',
                 ].map((item) => (
                   <li key={item}>
@@ -247,7 +517,7 @@ function App() {
             </div>
             <div className="what-card">
               <div className="card-header">
-                <span className="card-tag">EXEMPLO DE EMAIL</span>
+                <span className="card-tag">EXEMPLO DE APOSTA</span>
               </div>
               <div className="card-body">
                 <div className="email-preview">
@@ -292,7 +562,7 @@ function App() {
               </p>
               <ul className="price-features">
                 {[
-                  'Análise completa por email',
+                  'Análise completa no site',
                   'Aposta recomendada com odd',
                   'Entrega imediata após pagamento',
                   'Sem subscrição obrigatória',
@@ -306,7 +576,8 @@ function App() {
               <button
                 className="btn-primary btn-full"
                 onClick={handleBuy}
-                disabled={isDisabled}
+                disabled={loading || pick?.active === false}
+                title={disabledReason}
               >
                 {loading ? <span className="spinner" /> : `Comprar por ${PRICE}`}
               </button>
@@ -317,6 +588,8 @@ function App() {
         </div>
       </section>
 
+      <MyPurchases purchases={myPurchases} />
+
       {/* ── FAQ ── */}
       <section className="section faq">
         <div className="container container-sm">
@@ -324,8 +597,12 @@ function App() {
           <h2 className="section-title">FAQ</h2>
           <div className="faq-list">
             <FAQItem
-              question="Quando recebo a análise após o pagamento?"
-              answer="A análise é enviada automaticamente para o teu email logo após a confirmação do pagamento, geralmente em menos de 5 minutos."
+              question="Preciso mesmo de ter Telegram?"
+              answer="Sim. O login com Telegram é o que nos permite mostrar-te a aposta aqui no site depois do pagamento e deixá-la disponível para quando quiseres voltar a consultá-la — sem depender de emails que às vezes se perdem no spam."
+            />
+            <FAQItem
+              question="Quando vejo a análise após o pagamento?"
+              answer="Assim que o pagamento é confirmado, a análise aparece automaticamente nesta página, geralmente em poucos segundos."
             />
             <FAQItem
               question="O pagamento é seguro?"
@@ -333,11 +610,11 @@ function App() {
             />
             <FAQItem
               question="Posso comprar várias análises?"
-              answer="Claro! Cada compra é individual. Podes comprar sempre que quiseres uma nova análise."
+              answer="Claro! Cada compra é individual. Podes comprar sempre que quiseres uma nova análise, e todas ficam guardadas na tua conta de Telegram."
             />
             <FAQItem
-              question="E se não receber o email?"
-              answer="Verifica a pasta de spam. Se ainda assim não encontrares, entra em contacto connosco que resolvemos de imediato."
+              question="Consigo voltar a ver uma aposta que já paguei?"
+              answer="Sim — inicia sessão com o mesmo Telegram que usaste na compra e vais encontrar todas as tuas apostas compradas nesta página."
             />
             <FAQItem
               question="Têm política de reembolso?"
