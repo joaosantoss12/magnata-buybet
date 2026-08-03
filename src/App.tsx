@@ -208,9 +208,11 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
 function TelegramAuthBar({
   tgUser,
   onLogout,
+  hasPurchases,
 }: {
   tgUser: TgUser | null
   onLogout: () => void
+  hasPurchases: boolean
 }) {
   if (tgUser) {
     return (
@@ -222,6 +224,15 @@ function TelegramAuthBar({
           <span className="tg-auth-name">{tgUser.first_name}</span>
           {tgUser.username && <span className="tg-auth-username">@{tgUser.username}</span>}
         </div>
+        {hasPurchases && (
+          <button
+            className="tg-view-pick-btn"
+            onClick={() => document.getElementById('my-purchases')?.scrollIntoView({ behavior: 'smooth' })}
+            type="button"
+          >
+            Ver aposta
+          </button>
+        )}
         <button className="tg-logout-btn" onClick={onLogout} type="button">
           Sair
         </button>
@@ -243,7 +254,7 @@ function TelegramAuthBar({
 function MyPurchases({ purchases }: { purchases: PickSnapshot[] }) {
   if (!purchases.length) return null
   return (
-    <section className="section my-purchases">
+    <section id="my-purchases" className="section my-purchases">
       <div className="container container-sm">
         <p className="section-tag">A tua conta</p>
         <h2 className="section-title">As Tuas Apostas Compradas</h2>
@@ -403,7 +414,7 @@ function App() {
           </p>
 
           <div id="tg-auth-bar">
-            <TelegramAuthBar tgUser={tgUser} onLogout={logout} />
+            <TelegramAuthBar tgUser={tgUser} onLogout={logout} hasPurchases={myPurchases.length > 0} />
           </div>
 
           <div className="hero-actions">

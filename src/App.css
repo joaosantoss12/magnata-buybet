@@ -855,6 +855,20 @@
 }
 .tg-logout-btn:hover { color: var(--text); background: rgba(255,255,255,0.1); }
 
+.tg-view-pick-btn {
+  background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
+  border: 1px solid var(--gold-dark);
+  color: #0a0a0a;
+  border-radius: 8px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  margin-left: auto;
+}
+.tg-view-pick-btn:hover { opacity: 0.9; }
+
 .tg-login-widget { display: flex; justify-content: center; }
 
 .pick-image {
