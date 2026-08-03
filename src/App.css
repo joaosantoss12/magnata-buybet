@@ -668,9 +668,36 @@
   border: 1px solid rgba(34,197,94,0.3);
   border-radius: 24px;
   padding: 3rem 2.5rem;
-  max-width: 480px;
+  max-width: 640px;
+  width: 100%;
   text-align: center;
   box-shadow: 0 0 60px rgba(34,197,94,0.1);
+}
+
+@media (max-width: 640px) {
+  .success-card {
+    padding: 2.5rem 1.5rem;
+  }
+}
+
+/* The pick details themselves read better as a left/right two-column
+   layout than centered — the parent's text-align:center is only meant
+   for the icon/heading/intro copy above them. */
+.success-card .email-preview {
+  text-align: left;
+}
+
+.success-card .email-row > span:first-child {
+  flex-shrink: 0;
+}
+
+.success-card .email-row > span:last-child {
+  flex: 1;
+  text-align: right;
+}
+
+.success-card .email-analysis p {
+  text-align: left;
 }
 
 .success-icon {
