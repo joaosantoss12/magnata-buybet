@@ -869,6 +869,40 @@
 }
 .tg-view-pick-btn:hover { opacity: 0.9; }
 
+.pick-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.pick-modal-card {
+  position: relative;
+  margin: auto;
+}
+
+.pick-modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 8px;
+  width: 2.25rem;
+  height: 2.25rem;
+  font-size: 1rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.pick-modal-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
+
 .tg-login-widget { display: flex; justify-content: center; }
 
 .pick-image {

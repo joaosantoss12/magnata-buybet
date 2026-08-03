@@ -209,10 +209,12 @@ function TelegramAuthBar({
   tgUser,
   onLogout,
   hasPurchases,
+  onViewPick,
 }: {
   tgUser: TgUser | null
   onLogout: () => void
   hasPurchases: boolean
+  onViewPick: () => void
 }) {
   if (tgUser) {
     return (
@@ -225,11 +227,7 @@ function TelegramAuthBar({
           {tgUser.username && <span className="tg-auth-username">@{tgUser.username}</span>}
         </div>
         {hasPurchases && (
-          <button
-            className="tg-view-pick-btn"
-            onClick={() => document.getElementById('my-purchases')?.scrollIntoView({ behavior: 'smooth' })}
-            type="button"
-          >
+          <button className="tg-view-pick-btn" onClick={onViewPick} type="button">
             Ver aposta
           </button>
         )}
@@ -247,6 +245,22 @@ function TelegramAuthBar({
         fica disponível aqui no site depois do pagamento, sem depender do email.
       </p>
       <TelegramLoginWidget />
+    </div>
+  )
+}
+
+function PickModal({ pick, onClose }: { pick: PickSnapshot; onClose: () => void }) {
+  return (
+    <div className="pick-modal-overlay" onClick={onClose}>
+      <div className="success-card pick-modal-card" onClick={(e) => e.stopPropagation()}>
+        <button className="pick-modal-close" onClick={onClose} type="button" aria-label="Fechar">
+          ✕
+        </button>
+        <div className="success-icon">✓</div>
+        <h1>A Tua Aposta</h1>
+        <p>Aqui está a tua análise e aposta recomendada:</p>
+        <PickCard pick={pick} />
+      </div>
     </div>
   )
 }
@@ -275,6 +289,7 @@ function App() {
   const [tgUser, setTgUser] = useState<TgUser | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [myPurchases, setMyPurchases] = useState<PickSnapshot[]>([])
+  const [showPickModal, setShowPickModal] = useState(false)
   const isSuccess = new URLSearchParams(window.location.search).get('success') === '1'
 
   const refreshAuth = useCallback(async () => {
@@ -414,7 +429,12 @@ function App() {
           </p>
 
           <div id="tg-auth-bar">
-            <TelegramAuthBar tgUser={tgUser} onLogout={logout} hasPurchases={myPurchases.length > 0} />
+            <TelegramAuthBar
+              tgUser={tgUser}
+              onLogout={logout}
+              hasPurchases={myPurchases.length > 0}
+              onViewPick={() => setShowPickModal(true)}
+            />
           </div>
 
           <div className="hero-actions">
@@ -653,6 +673,10 @@ function App() {
           </p>
         </div>
       </footer>
+
+      {showPickModal && myPurchases[0] && (
+        <PickModal pick={myPurchases[0]} onClose={() => setShowPickModal(false)} />
+      )}
     </div>
   )
 }
