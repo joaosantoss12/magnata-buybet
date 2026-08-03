@@ -687,13 +687,20 @@
   text-align: left;
 }
 
+.success-card .email-row {
+  align-items: flex-start;
+}
+
 .success-card .email-row > span:first-child {
   flex-shrink: 0;
+  padding-top: 0.1rem;
 }
 
 .success-card .email-row > span:last-child {
   flex: 1;
+  min-width: 0;
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .success-card .email-analysis p {
